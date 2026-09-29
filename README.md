@@ -49,9 +49,48 @@ client at `http://host:8000`.
 
 `ollama:<name>[:tag]` · `hf:<org>/<repo>` · `/path/to/hf-dir` · `/path/to/model.gguf` · `/path/to/Modelfile`
 
+## Native engine core (`engine: native`)
+
+`osim.core` is OSIM's own serving core, the part that decides throughput:
+
+* **Paged KV cache** (`BlockPool`): fixed-size blocks, ref-counted, no fragmentation.
+* **Automatic prefix caching**: chained block hashes, LRU eviction, prompts sharing a prefix share physical blocks.
+* **Continuous batching scheduler**: decodes first, then chunked prefill, then FCFS admission under a token budget.
+* **Recompute preemption** when KV memory runs out, and safe abort on client disconnect.
+* **`ModelRunner` protocol**: one method, `execute(work) -> sampled tokens`. A GPU runner plugs in here.
+
+Only the CPU `SimRunner` (deterministic, with a real fake KV cache) ships today. Tests assert the output
+is bit-identical with prefix caching on or off, chunked or not, and under heavy preemption, so a bug in
+block tables or sharing changes the output and fails CI.
+
+```yaml
+models:
+  - {name: demo, source: "hf:x/y", engine: native,
+     options: {num_blocks: 8192, block_size: 16, max_batched_tokens: 2048, prefix_cache: true}}
+```
+
+## Benchmarking (`osim bench`)
+
+Same workload and client against any OpenAI-compatible server, so engines can be compared fairly:
+
+```bash
+osim bench --url http://host:8000 --model M --requests 64 --concurrency 16 \
+           --prompt-words 1500 --shared-words 1400 --max-tokens 32
+```
+
+Point it at OSIM, vLLM, SGLang and Ollama (`/v1`) on the same GPU and model. Reports req/s, output tok/s,
+TTFT and inter-token latency p50/p99.
+
+Measured so far (CPU, `SimRunner` with a linear cost model of 2 ms + 0.02 ms/token per step, 64 requests,
+16 concurrent, 1400 of 1500 prompt words shared): prefix cache off 135 tok/s and mean TTFT 1997 ms;
+on 507 tok/s and 191 ms. This validates the scheduler and cache mechanism. **It says nothing about
+speed against vLLM, SGLang or Ollama**, since there is no real model or GPU in it.
+
 ## Layout
 
 ```
+src/osim/core/      paged KV blocks, prefix cache, scheduler, async engine, runner protocol
+src/osim/bench.py   OpenAI-compatible load generator
 src/osim/formats/   gguf, modelfile, ollama_store, hf readers
 src/osim/models.py  reference -> ModelSpec
 src/osim/engines.py launch planners for vLLM / SGLang / Ollama
@@ -61,6 +100,11 @@ src/osim/server.py  OpenAI + Ollama compatible gateway
 ```
 
 ## Status and limits
+
+* **OSIM does not yet outperform vLLM/SGLang/Ollama, and no result here shows that.** They win on GPU
+  kernels (FlashAttention/FlashInfer, CUDA graphs, quantized GEMMs, speculative decoding, TP/PP).
+  The native core has the scheduling and memory architecture but no GPU `ModelRunner` yet. The next
+  milestone is a torch/CUDA runner, then `osim bench` head-to-head runs on real hardware.
 
 * vLLM, SGLang and Ollama must be installed separately (`pip install vllm`, `pip install sglang`,
   or the `ollama` binary). The launch flags were written from those engines' documented CLIs; they

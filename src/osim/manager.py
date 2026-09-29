@@ -6,11 +6,13 @@ import asyncio
 from dataclasses import dataclass
 
 from . import engines
-from .backends import Backend, EchoBackend, HTTPBackend, ManagedBackend
+from .backends import Backend, EchoBackend, HTTPBackend, ManagedBackend, NativeBackend
 from .config import ModelConfig, OsimConfig
 from .formats.ollama_store import OllamaStore
 from .models import ModelSpec, resolve
 from .router import ReplicaPool
+
+IN_PROCESS = ("echo", "native")
 
 
 @dataclass
@@ -27,14 +29,14 @@ def plan_models(cfg: OsimConfig) -> list[ModelPlan]:
     out: list[ModelPlan] = []
     port = cfg.server.engine_base_port
     for m in cfg.models:
-        if m.engine == "echo":
+        if m.engine in IN_PROCESS:
             spec = ModelSpec(ref=m.source, fmt="hub", path=m.source)
         else:
             spec = resolve(m.source, store)
         engine = engines.choose_engine(spec, m.engine)
         launches: list[engines.LaunchPlan] = []
         ports: list[int] = []
-        if not m.urls and engine != "echo":
+        if not m.urls and engine not in IN_PROCESS:
             for _ in range(m.replicas):
                 launches.append(
                     engines.plan(spec, m.name, engine, cfg.server.engine_host, port, m.options)
@@ -61,6 +63,10 @@ class Manager:
         s, name = self.cfg.server, mp.cfg.name
         if mp.engine == "echo":
             return [EchoBackend(f"{name}-{i}", name) for i in range(mp.cfg.replicas)]
+        if mp.engine == "native":
+            return [
+                NativeBackend(f"{name}-{i}", name, **mp.cfg.options) for i in range(mp.cfg.replicas)
+            ]
         if mp.cfg.urls:
             return [
                 HTTPBackend(f"{name}-{i}", u, health_path=_health_path(mp.engine))

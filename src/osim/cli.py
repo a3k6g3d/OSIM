@@ -56,6 +56,27 @@ def _cmd_models(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_bench(args: argparse.Namespace) -> int:
+    import asyncio
+
+    from .bench import run_bench
+
+    res = asyncio.run(
+        run_bench(
+            args.url,
+            args.model,
+            args.requests,
+            args.concurrency,
+            args.prompt_words,
+            args.shared_words,
+            args.max_tokens,
+            args.api_key,
+        )
+    )
+    print(json.dumps(res, indent=2))
+    return 0 if res["ok"] == res["requests"] else 1
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="osim", description=__doc__)
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -74,6 +95,18 @@ def main(argv: list[str] | None = None) -> int:
     m = sub.add_parser("models", help="list models in the local Ollama store")
     m.add_argument("--ollama-dir")
     m.set_defaults(fn=_cmd_models)
+    b = sub.add_parser(
+        "bench", help="load-test any OpenAI-compatible server (OSIM/vLLM/SGLang/Ollama)"
+    )
+    b.add_argument("--url", required=True, help="server base URL, e.g. http://localhost:8000")
+    b.add_argument("--model", required=True)
+    b.add_argument("--requests", type=int, default=64)
+    b.add_argument("--concurrency", type=int, default=16)
+    b.add_argument("--prompt-words", type=int, default=256)
+    b.add_argument("--shared-words", type=int, default=0, help="words of common prefix per prompt")
+    b.add_argument("--max-tokens", type=int, default=64)
+    b.add_argument("--api-key")
+    b.set_defaults(fn=_cmd_bench)
     args = ap.parse_args(argv)
     try:
         return int(args.fn(args))

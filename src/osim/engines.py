@@ -15,7 +15,7 @@ from typing import Any
 
 from .models import ModelSpec
 
-ENGINES = ("vllm", "sglang", "ollama", "echo")
+ENGINES = ("vllm", "sglang", "ollama", "echo", "native")
 
 
 @dataclass
@@ -126,6 +126,7 @@ PLANNERS: dict[str, Callable[..., LaunchPlan]] = {
     "sglang": plan_sglang,
     "ollama": plan_ollama,
     "echo": plan_echo,
+    "native": plan_echo,
 }
 
 
